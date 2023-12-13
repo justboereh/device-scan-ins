@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { createStorage } from 'unstorage'
-import indexedDbDriver from 'unstorage/drivers/indexedb'
 import { DatePicker } from 'v-calendar'
 import { InputBox } from '#components'
 import 'v-calendar/style.css'
@@ -8,7 +6,7 @@ import 'v-calendar/style.css'
 type Scan = {
   employee: string
   device: string
-  scannedIn?: Date
+  scannedIn: Date
   scannedOut?: Date
 }
 
@@ -29,101 +27,134 @@ type IsScannedOption =
 
 const loading = ref(true)
 const date = ref<Date>()
-const scans = ref<ScanList[]>([])
-const identifier = ref('')
+const scanList = ref<ScanList[]>([])
+const identifiers = reactive({
+  device: '',
+  employee: '',
+})
 const Dialog = reactive({
   enabled: false,
   title: '',
+  ok: () => {},
   message: '',
 })
+const scans = computed(() => {
+  const d = date.value
 
-function useStorage() {
-  return createStorage({
-    driver: indexedDbDriver({ base: 'desiin:' }),
-  })
-}
+  if (!d) return []
 
-function getScanList(date: Date) {
-  let list = scans.value.find((s) => s.date.toDateString() === date.toDateString())
+  let list = scanList.value.find((s) => s.date.toDateString() === d.toDateString())
 
   if (!list) {
-    const l = scans.value.push({ date, scans: [] })
+    const l = scanList.value.push({ date: d, scans: [] })
 
-    list = scans.value[l - 1]
+    list = scanList.value[l - 1]
   }
 
-  return list
+  return list.scans
+})
+
+function getScanListIndex(date: Date) {
+  return scanList.value.findIndex((s) => s.date.toDateString() === date.toDateString())
+}
+
+function insertScan(scan: Scan) {
+  if (!date.value) return useDialog({ title: 'Date is required', message: 'Please select a date first' })
+
+  const listIndex = getScanListIndex(date.value)
+  const lastScans = scans.value
+  const scanIndex = lastScans.findIndex((s) => s.device === scan.device && s.employee === scan.employee)
 }
 
 function isScannedIn(option: IsScannedOption) {
-  const list = getScanList(option.date)
-
   if ('employee' in option) {
-    return list.scans.some((s) => s.employee === option.employee && s.scannedIn)
+    return scans.value.findIndex((s) => s.employee === option.employee && s.scannedIn) !== -1
   }
 
-  return list.scans.findIndex((s) => s.device === option.device && s.scannedIn)
+  return scans.value.findIndex((s) => s.device === option.device && s.scannedIn) !== -1
 }
 
 function isScannedOut(option: IsScannedOption) {
-  const list = getScanList(option.date)
-
   if ('employee' in option) {
-    return list.scans.some((s) => s.employee === option.employee && s.scannedOut)
+    return scans.value.some((s) => s.employee === option.employee && s.scannedOut)
   }
 
-  return list.scans.some((s) => s.device === option.device && s.scannedOut)
+  return scans.value.some((s) => s.device === option.device && s.scannedOut)
 }
 
 function Scanned() {
   if (!date.value) {
-    identifier.value = ''
-
     return useDialog({
       title: 'Date is required',
       message: 'Please select a date first before scanning',
     })
   }
 
-  const id = identifier.value.trim()
-
-  if (!id) {
-    identifier.value = ''
+  if (identifiers.employee && !validateEmployeeId(identifiers.employee)) {
+    identifiers.employee = ''
 
     return useDialog({
-      title: 'Identifier is required',
-      message: 'Please enter a device or employee ID',
+      title: 'Invalid employee ID',
+      message: 'Please enter a valid employee ID',
+      ok: focusEmployeeInput,
     })
   }
 
-  if (id.toLowerCase().charAt(0) === 'f') {
-    const scannedIn = isScannedIn({ employee: id, date: date.value })
-    const scannedOut = isScannedOut({ employee: id, date: date.value })
-
-    identifier.value = ''
+  if (identifiers.employee && isScannedOut({ employee: identifiers.employee, date: date.value })) {
+    identifiers.employee = ''
 
     return useDialog({
-      title: 'Already scanned',
-      message: 'This employee is already scanned',
+      title: 'Already scanned out',
+      message: 'This employee is already scanned out',
+      ok: focusEmployeeInput,
     })
   }
+
+  if (identifiers.employee && isScannedIn({ employee: identifiers.employee, date: date.value })) {
+    // TODO: Scan out employee
+
+    return
+  }
+
+  if (identifiers.employee && !identifiers.device) return focusDeviceInput()
+
+  if (identifiers.device && isScannedOut({ device: identifiers.device, date: date.value })) {
+    identifiers.device = ''
+
+    return useDialog({
+      title: 'Already scanned out',
+      message: 'This device is already scanned out',
+      ok: focusDeviceInput,
+    })
+  }
+
+  if (identifiers.device && isScannedIn({ device: identifiers.device, date: date.value })) {
+    // TODO: Scan out device
+
+    return
+  }
+
+  if (identifiers.device && !identifiers.employee) return focusEmployeeInput()
+
+  // TODO Scan in device and employee
 }
 
-function useDialog({ title, message }: { title: string; message: string }) {
+function useDialog({ title, message, ok }: { title: string; message: string; ok?: () => void }) {
   Dialog.title = title
   Dialog.message = message
+  Dialog.ok = ok || (() => {})
   Dialog.enabled = true
 }
 
-watch(scans, async (v) => {
+watch(scanList, async (v) => {
   await useStorage().setItem('scans', v)
 })
 
 onMounted(async () => {
   date.value = new Date()
-  scans.value = (await useStorage().getItem<ScanList[]>('scans')) || []
+  scanList.value = (await useStorage().getItem<ScanList[]>('scans')) || []
 
-  setTimeout(() => (loading.value = false), 1500)
+  loading.value = false
 })
 
 defineComponent({
@@ -147,6 +178,7 @@ useHead({
         <date-picker
           v-model="date"
           ref="calender"
+          color="red"
           expanded
           is-required
           borderless
@@ -155,7 +187,7 @@ useHead({
           <template #footer>
             <div class="w-full px-3 pb-3">
               <button
-                class="bg-blue-700 hover:bg-blue-900 transition-all duration-200 text-white font-bold w-full px-3 py-1 rounded-sm"
+                class="bg-red-700 hover:bg-red-900 transition-all duration-200 text-white font-bold w-full px-3 py-1 rounded-sm"
                 @click="date = new Date()"
               >
                 Today
@@ -165,20 +197,25 @@ useHead({
         </date-picker>
       </div>
 
+      {{ identifiers.employee }}
+
       <div class="flex-grow flex flex-col gap-3">
         <div class="flex <sm:flex-col gap-3">
           <input-box
-            v-model="identifier"
-            label="Device/Employee ID"
+            id="employee-input"
+            v-model="identifiers.employee"
+            label="Employee ID"
+            class="flex-grow"
             @submit="Scanned"
           />
 
-          <!-- <input-box
-            ref="deviceEl"
-            v-model="inputs.device"
+          <input-box
+            ref="device-input"
+            v-model="identifiers.device"
             label="Device ID"
-            @submit="Scanned('device')"
-          /> -->
+            class="flex-grow"
+            @submit="Scanned"
+          />
         </div>
 
         <div class="flex-grow p-4 border border-light-700 bg-white rounded-xl shadow-xl shadow-black/5">hi</div>
@@ -196,8 +233,8 @@ useHead({
 
       <div class="flex gap-3 mt-4">
         <button
-          class="bg-blue-700 hover:bg-blue-900 transition-all duration-200 text-white px-3 py-1 rounded-s"
-          @click="Dialog.enabled = false"
+          class="bg-red-700 hover:bg-red-900 transition-all duration-200 text-white px-3 py-1 rounded-md w-full"
+          @click=";(Dialog.enabled = false), Dialog.ok()"
         >
           OK
         </button>
