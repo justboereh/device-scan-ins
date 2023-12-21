@@ -10,7 +10,7 @@ const focused = ref(false)
 </script>
 
 <template>
-  <div class="relative group flex items-center">
+  <div class="relative group flex items-center h-13">
     <label
       for="input"
       :class="[
@@ -24,7 +24,7 @@ const focused = ref(false)
     <input
       :value="modelValue"
       type="text"
-      class="border border-light-700 rounded-md px-3 pb-1 pt-4 outline-none border focus:border-red-500 transition-all duration-200 w-full"
+      class="border border-light-700 rounded-sm px-3 pb-1 pt-4 outline-none border focus:border-red-500 transition-all duration-200 w-full"
       @input="$emit('update:modelValue', ($event?.target as HTMLInputElement)?.value)"
       @focus="focused = true"
       @blur="focused = false"

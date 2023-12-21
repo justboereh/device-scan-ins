@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { DatePicker } from 'v-calendar'
-import { InputBox } from '#components'
+import { watchIgnorable } from '@vueuse/core'
+import dayjs, { Dayjs } from 'dayjs'
+import utcPlugin from 'dayjs/plugin/utc'
+import { message } from 'ant-design-vue'
+
 import 'v-calendar/style.css'
+
+dayjs.extend(utcPlugin)
 
 type Scan = {
   employee: string
   device: string
   scannedIn: Date
   scannedOut?: Date
-}
-
-type ScanList = {
-  date: Date
-  scans: Scan[]
 }
 
 type IsScannedOption =
@@ -25,46 +25,24 @@ type IsScannedOption =
       date: Date
     }
 
-const loading = ref(true)
-const date = ref<Date>()
-const scanList = ref<ScanList[]>([])
+const [useMessage, contextHolder] = message.useMessage()
+const clearDataModalEnabled = ref(false)
+const loading = ref(false)
+const date = ref<Dayjs>()
 const identifiers = reactive({
   device: '',
   employee: '',
 })
-const Dialog = reactive({
+const dialog = reactive({
   enabled: false,
   title: '',
   ok: () => {},
   message: '',
 })
-const scans = computed(() => {
-  const d = date.value
-
-  if (!d) return []
-
-  let list = scanList.value.find((s) => s.date.toDateString() === d.toDateString())
-
-  if (!list) {
-    const l = scanList.value.push({ date: d, scans: [] })
-
-    list = scanList.value[l - 1]
-  }
-
-  return list.scans
-})
-
-function getScanListIndex(date: Date) {
-  return scanList.value.findIndex((s) => s.date.toDateString() === date.toDateString())
-}
-
-function insertScan(scan: Scan) {
-  if (!date.value) return useDialog({ title: 'Date is required', message: 'Please select a date first' })
-
-  const listIndex = getScanListIndex(date.value)
-  const lastScans = scans.value
-  const scanIndex = lastScans.findIndex((s) => s.device === scan.device && s.employee === scan.employee)
-}
+const scans = ref<Scan[]>([])
+const scanIns = computed(() => scans.value.filter((s) => !s.scannedOut))
+const scanOuts = computed(() => scans.value.filter((s) => !!s.scannedOut))
+const DateFormat = () => dayjs(date.value).format('MM-DD-YYYY')
 
 function isScannedIn(option: IsScannedOption) {
   if ('employee' in option) {
@@ -82,85 +60,99 @@ function isScannedOut(option: IsScannedOption) {
   return scans.value.some((s) => s.device === option.device && s.scannedOut)
 }
 
+function ScanOut(index: number) {
+  const scan = scans.value[index]
+  scan.scannedOut = new Date()
+
+  scans.value = [...scans.value.slice(0, index), scan, ...scans.value.slice(index + 1)]
+
+  identifiers.employee = ''
+  identifiers.device = ''
+}
+
 function Scanned() {
   if (!date.value) {
-    return useDialog({
-      title: 'Date is required',
-      message: 'Please select a date first before scanning',
-    })
+    return useMessage.error('Please select a date first before scanning')
   }
+
+  if (!identifiers.employee && !identifiers.device) return
 
   if (identifiers.employee && !validateEmployeeId(identifiers.employee)) {
     identifiers.employee = ''
+    FocusEmployeeInput()
 
-    return useDialog({
-      title: 'Invalid employee ID',
-      message: 'Please enter a valid employee ID',
-      ok: focusEmployeeInput,
-    })
+    return useMessage.error('Please enter a valid employee ID')
   }
 
-  if (identifiers.employee && isScannedOut({ employee: identifiers.employee, date: date.value })) {
+  if (identifiers.employee && isScannedOut({ employee: identifiers.employee, date: date.value.toDate() })) {
     identifiers.employee = ''
+    FocusEmployeeInput()
 
-    return useDialog({
-      title: 'Already scanned out',
-      message: 'This employee is already scanned out',
-      ok: focusEmployeeInput,
-    })
+    return useMessage.error('This employee is already scanned out')
   }
 
-  if (identifiers.employee && isScannedIn({ employee: identifiers.employee, date: date.value })) {
-    // TODO: Scan out employee
+  if (identifiers.employee && isScannedIn({ employee: identifiers.employee, date: date.value.toDate() })) {
+    const index = scans.value.findIndex((s) => s.employee === identifiers.employee && s.scannedIn)
 
-    return
+    useMessage.success('Scanned out successfully')
+    return ScanOut(index)
   }
 
-  if (identifiers.employee && !identifiers.device) return focusDeviceInput()
+  if (identifiers.employee && !identifiers.device) return FocusDeviceInput()
 
-  if (identifiers.device && isScannedOut({ device: identifiers.device, date: date.value })) {
+  if (identifiers.device && isScannedOut({ device: identifiers.device, date: date.value.toDate() })) {
     identifiers.device = ''
+    FocusDeviceInput()
 
-    return useDialog({
-      title: 'Already scanned out',
-      message: 'This device is already scanned out',
-      ok: focusDeviceInput,
-    })
+    return useMessage.error('This device is already scanned out')
   }
 
-  if (identifiers.device && isScannedIn({ device: identifiers.device, date: date.value })) {
-    // TODO: Scan out device
+  if (identifiers.device && isScannedIn({ device: identifiers.device, date: date.value.toDate() })) {
+    const index = scans.value.findIndex((s) => s.device === identifiers.device && s.scannedIn)
 
-    return
+    useMessage.success('Scanned out successfully')
+    return ScanOut(index)
   }
 
-  if (identifiers.device && !identifiers.employee) return focusEmployeeInput()
+  if (identifiers.device && !identifiers.employee) return FocusEmployeeInput()
 
-  // TODO Scan in device and employee
+  scans.value = [
+    {
+      employee: identifiers.employee,
+      device: identifiers.device,
+      scannedIn: new Date(),
+    },
+    ...scans.value,
+  ]
+
+  useMessage.success('Scanned successfully')
+
+  identifiers.employee = ''
+  identifiers.device = ''
+  FocusEmployeeInput()
 }
 
-function useDialog({ title, message, ok }: { title: string; message: string; ok?: () => void }) {
-  Dialog.title = title
-  Dialog.message = message
-  Dialog.ok = ok || (() => {})
-  Dialog.enabled = true
+function ClearData() {
+  useStorage().removeItem(`scans::${DateFormat()}`)
+  scans.value = []
+  clearDataModalEnabled.value = false
 }
 
-watch(scanList, async (v) => {
-  await useStorage().setItem('scans', v)
-})
+function SaveScans(as: 'excel' | 'csv') {
+  if (!date.value) return useMessage.error('Please select a date first before saving')
 
-onMounted(async () => {
-  date.value = new Date()
-  scanList.value = (await useStorage().getItem<ScanList[]>('scans')) || []
+  if (as === 'excel') SaveScansAsExcel(scans.value, date.value)
+  else SaveScansAsCsv(scans.value)
+}
 
-  loading.value = false
-})
+onMounted(async () => (date.value = dayjs().startOf('day')))
 
-defineComponent({
-  components: {
-    DatePicker,
-  },
+const { ignoreUpdates: IgnoreScansUpdates } = watchIgnorable(scans, (s) => useStorage().setItem(`scans::${DateFormat()}`, s))
+
+watch(date, () => {
+  IgnoreScansUpdates(async () => {
+    scans.value = (await useStorage().getItem(`scans::${DateFormat()}`)) || []
+  })
 })
 
 useHead({
@@ -172,104 +164,158 @@ useHead({
 </script>
 
 <template>
-  <main class="fixed top-0 left-0 right-0 bottom-0 grid place-items-center p-3 md:py-16">
-    <div class="w-full max-w-5xl flex <md:flex-col md:gap-8 h-full">
-      <div class="md:h-full grid place-items-center md:p-4">
-        <date-picker
-          v-model="date"
-          ref="calender"
-          color="red"
-          expanded
-          is-required
-          borderless
-          transparent
-        >
-          <template #footer>
-            <div class="w-full px-3 pb-3">
-              <button
-                class="bg-red-700 hover:bg-red-900 transition-all duration-200 text-white font-bold w-full px-3 py-1 rounded-sm"
-                @click="date = new Date()"
+  <a-config-provider
+    :theme="{
+      components: {},
+    }"
+  >
+    <header class="py-3 px-3 sm:px-6 bg-white rounded-sm">
+      <a-flex
+        :justify="'space-between'"
+        class="mx-auto max-w-5xl"
+      >
+        <a-date-picker
+          v-model:value="date"
+          placeholder="Choose a date"
+        />
+
+        <a-dropdown>
+          <a-button type="text">
+            <template #icon>
+              <icon name="fluent:line-horizontal-3-20-regular" />
+            </template>
+          </a-button>
+
+          <template #overlay>
+            <a-menu>
+              <a-menu-item
+                :disabled="!date"
+                @click="SaveScans('excel')"
               >
-                Today
-              </button>
-            </div>
+                Save as Excel
+              </a-menu-item>
+              <a-menu-item
+                :disabled="!date"
+                @click="SaveScans('csv')"
+              >
+                Save as CSV
+              </a-menu-item>
+
+              <a-menu-divider />
+
+              <a-menu-item>Import Excel </a-menu-item>
+              <a-menu-item>Import CSV </a-menu-item>
+
+              <a-menu-divider />
+
+              <a-menu-item>Import Excel to here </a-menu-item>
+              <a-menu-item>Import CSV to here </a-menu-item>
+
+              <a-menu-divider />
+
+              <a-menu-item
+                danger
+                @click="clearDataModalEnabled = true"
+                >Clear data
+              </a-menu-item>
+            </a-menu>
           </template>
-        </date-picker>
-      </div>
+        </a-dropdown>
+      </a-flex>
+    </header>
 
-      {{ identifiers.employee }}
+    <main class="p-3 sm:p-6">
+      <div class="mx-auto max-w-5xl">
+        <div class="pb-3 sm:pb-6">
+          <a-space size="small">
+            <a-input
+              id="employee-input"
+              v-model:value="identifiers.employee"
+              placeholder="Employee ID"
+              @pressEnter="Scanned"
+            />
 
-      <div class="flex-grow flex flex-col gap-3">
-        <div class="flex <sm:flex-col gap-3">
-          <input-box
-            id="employee-input"
-            v-model="identifiers.employee"
-            label="Employee ID"
-            class="flex-grow"
-            @submit="Scanned"
-          />
-
-          <input-box
-            ref="device-input"
-            v-model="identifiers.device"
-            label="Device ID"
-            class="flex-grow"
-            @submit="Scanned"
-          />
+            <a-input
+              id="device-input"
+              v-model:value="identifiers.device"
+              placeholder="Device ID"
+              @pressEnter="Scanned"
+            />
+          </a-space>
         </div>
 
-        <div class="flex-grow p-4 border border-light-700 bg-white rounded-xl shadow-xl shadow-black/5">hi</div>
-      </div>
-    </div>
-  </main>
-
-  <div
-    v-if="Dialog.enabled"
-    class="bg-black/25 backdrop-blur-sm z-10 fixed z-100 top-0 left-0 right-0 bottom-0 grid place-items-center"
-  >
-    <div class="p-4 bg-white rounded-lg">
-      <h1 class="text-xl font-bold">{{ Dialog.title }}</h1>
-      <p class="text-black/75">{{ Dialog.message }}</p>
-
-      <div class="flex gap-3 mt-4">
-        <button
-          class="bg-red-700 hover:bg-red-900 transition-all duration-200 text-white px-3 py-1 rounded-md w-full"
-          @click=";(Dialog.enabled = false), Dialog.ok()"
+        <a-table
+          :pagination="false"
+          :data-source="scans"
+          :scroll="{ x: 'max-content' }"
+          :columns="[
+            {
+              title: 'Status',
+              dataIndex: 'status',
+              key: 'status',
+              filters: [
+                {
+                  text: 'Scanned In',
+                  value: 'scannedIn',
+                },
+                {
+                  text: 'Scanned Out',
+                  value: 'scannedOut',
+                },
+              ],
+            },
+            {
+              title: 'Employee ID',
+              dataIndex: 'employee',
+              key: 'employee',
+            },
+            {
+              title: 'Device ID',
+              dataIndex: 'device',
+              key: 'device',
+            },
+            {
+              title: 'Scanned In',
+              dataIndex: 'scannedIn',
+              key: 'scannedIn',
+            },
+            {
+              title: 'Scanned Out',
+              dataIndex: 'scannedOut',
+              key: 'scannedOut',
+            },
+          ]"
         >
-          OK
-        </button>
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'scannedIn'">
+              {{ dayjs(record['scannedIn']).format('MMM DD, YYYY h:mm:ss A') }}
+            </template>
+
+            <template v-else-if="column.key === 'scannedOut'">
+              {{ record['scannedOut'] ? dayjs(record['scannedOut']).format('MMM DD, YYYY h:mm:ss A') : '' }}
+            </template>
+          </template>
+        </a-table>
       </div>
-    </div>
-  </div>
+    </main>
 
-  <div
-    :class="[
-      'fixed z-100 top-0 left-0 right-0 bottom-0 flex items-center justify-center gap-1.5',
-      loading ? 'bg-black/50 backdrop-blur-sm' : 'pointer-events-none opacity-0',
-    ]"
-  >
-    <div
-      v-for="index of 4"
-      class="w-4 h-4"
+    <client-only>
+      <context-holder />
+    </client-only>
+
+    <a-modal
+      v-model:open="clearDataModalEnabled"
+      title="Clear Data"
+      cancel-text="Confirm"
+      :cancel-button-props="{
+        danger: true,
+        type: 'text',
+      }"
+      ok-text="Cancel"
+      @cancel="ClearData"
+      @ok="clearDataModalEnabled = false"
     >
-      <span
-        class="w-full h-full bg-red-500 rounded-full block"
-        :style="{ animation: 'pulsier 1s infinite ease-in-out', animationDelay: `${index * 200}ms` }"
-      />
-    </div>
-  </div>
+      <p>Are you sure you want to clear the data? This action is irreversible.</p>
+    </a-modal>
+  </a-config-provider>
 </template>
-
-<style>
-@keyframes pulsier {
-  0% {
-    transform: scale(0);
-  }
-  50% {
-    transform: scale(1);
-  }
-  100% {
-    transform: scale(0);
-  }
-}
-</style>
