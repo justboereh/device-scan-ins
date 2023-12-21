@@ -29,8 +29,9 @@ export const FocusEmployeeInput = () => (document.querySelector('#employee-input
 export const FocusDeviceInput = () => (document.querySelector('#device-input') as HTMLInputElement).focus()
 
 export const SaveScansAsExcel = (scans: Scan[], date: Dayjs) => {
+  const name = `scans-${date.format('MM-DD-YYYY')}.xlsx`
   const workbook = new Workbook()
-  const worksheet = workbook.addWorksheet('Scans')
+  const worksheet = workbook.addWorksheet(name)
 
   worksheet.columns = [
     { header: 'Employee ID', key: 'employee', width: 15, style: { alignment: { vertical: 'middle', horizontal: 'center' } } },
@@ -53,9 +54,27 @@ export const SaveScansAsExcel = (scans: Scan[], date: Dayjs) => {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `scans-${date.format('MM-DD-YYYY')}.xlsx`
+    a.download = name
     a.click()
   })
 }
 
-export const SaveScansAsCsv = (scans: Scan[]) => {}
+export const SaveScansAsCSV = (scans: Scan[], date: Dayjs) => {
+  const name = `scans-${date.format('MM-DD-YYYY')}.csv`
+  const csv = [
+    ['Employee ID', 'Device ID', 'Scan In Date', 'Scan Out Date'].join(','),
+    ...scans.map((scan) => [
+      scan.employee,
+      scan.device,
+      `"${dayjs(scan.scannedIn).format('MMM DD, YYYY h:mm A')}"`,
+      scan.scannedOut ? `"${dayjs(scan.scannedOut).format('MMM DD, YYYY h:mm A')}"` : '',
+    ]),
+  ].join('\n')
+
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+}

@@ -142,7 +142,7 @@ function SaveScans(as: 'excel' | 'csv') {
   if (!date.value) return useMessage.error('Please select a date first before saving')
 
   if (as === 'excel') SaveScansAsExcel(scans.value, date.value)
-  else SaveScansAsCsv(scans.value)
+  else SaveScansAsCSV(scans.value, date.value)
 }
 
 onMounted(async () => (date.value = dayjs().startOf('day')))
